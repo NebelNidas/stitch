@@ -32,8 +32,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 class GenState {
     private final Map<String, Integer> counters = new HashMap<>();
@@ -44,11 +42,10 @@ class GenState {
     private boolean writeAll = false;
     private Scanner scanner = new Scanner(System.in);
 
-    private String targetNamespace = "net/minecraft/";
-    private final List<Pattern> obfuscatedPatterns = new ArrayList<Pattern>();
+    // Forced top-level package for intermediaries
+    private String targetNamespace = "";
 
     public GenState() {
-        this.obfuscatedPatterns.add(Pattern.compile("^[^/]*$")); // Default ofbfuscation. Minecraft classes without a package are obfuscated.
     }
 
     public void setWriteAll(boolean writeAll) {
@@ -72,14 +69,6 @@ class GenState {
             this.targetNamespace = namespace + "/";
         else
             this.targetNamespace = namespace;
-    }
-
-    public void clearObfuscatedPatterns() {
-        this.obfuscatedPatterns.clear();
-    }
-
-    public void addObfuscatedPattern(String regex) throws PatternSyntaxException {
-        this.obfuscatedPatterns.add(Pattern.compile(regex));
     }
 
     public void setCounter(String key, int value) {
@@ -129,11 +118,34 @@ class GenState {
     }
 
     public static boolean isMappedMethod(ClassStorage storage, JarClassEntry c, JarMethodEntry m) {
-        return isUnmappedMethodName(m.getName()) && m.isSource(storage, c);
+        return isUnmappedMethodName(m.getName(), c) && m.isSource(storage, c);
     }
 
-    public static boolean isUnmappedMethodName(String name) {
-       return (name.length() <= 2 || (name.length() == 3 && name.charAt(2) == '_')) && name.charAt(0) != '<';
+    public static boolean isUnmappedMethodName(String mathodName, JarClassEntry parentClass) {
+        if (
+            mathodName.charAt(0) != '<'
+                && (
+                    mathodName.length() <= 2 
+                        // TODO: Replace the flowing hardcoded exceptions with input parameters!
+                        || (mathodName.length() == 8 && parentClass.getName().equals("J/N"))
+                )
+        ) {
+            return true;
+        }
+        return false;
+    }
+
+    public static boolean isObfuscatedClass(JarClassEntry classEntry) {
+        String classPath = classEntry.getName();
+        String className = Arrays.asList(classPath.split("/")).stream().reduce((first, second) -> second).get();
+
+        if (
+            !classPath.contains("/")
+                || className.length() <= 2
+        ) {
+            return true;
+        }
+        return false;
     }
 
     @Nullable
@@ -353,7 +365,7 @@ class GenState {
         String cname = "";
         String prefixSaved = translatedPrefix;
 
-        if(!this.obfuscatedPatterns.stream().anyMatch(p -> p.matcher(className).matches())) {
+        if (!isObfuscatedClass(c)) {
             translatedPrefix = c.getFullyQualifiedName();
         } else {
             if (!isMappedClass(storage, c)) {

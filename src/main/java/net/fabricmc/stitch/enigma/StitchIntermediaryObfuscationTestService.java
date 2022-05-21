@@ -27,7 +27,7 @@ public class StitchIntermediaryObfuscationTestService implements ObfuscationTest
 	private final String prefix, classPrefix, classPackagePrefix, fieldPrefix, methodPrefix;
 
 	public StitchIntermediaryObfuscationTestService(EnigmaServiceContext<ObfuscationTestService> context) {
-		this.prefix = context.getArgument("package").orElse("net/minecraft") + "/";
+		this.prefix = context.getArgument("package").orElse("") + "/";
 		this.classPrefix = context.getArgument("classPrefix").orElse("class_");
 		this.fieldPrefix = context.getArgument("fieldPrefix").orElse("field_");
 		this.methodPrefix = context.getArgument("methodPrefix").orElse("method_");

@@ -68,15 +68,6 @@ public class CommandUpdateIntermediary extends Command {
                     state.setTargetNamespace(args[i + 1]);
                     i++;
                     break;
-                case "-p":
-                case "--obfuscation-pattern":
-                    if (!clearedPatterns)
-                        state.clearObfuscatedPatterns();
-                    clearedPatterns = true;
-
-                    state.addObfuscatedPattern(args[i + 1]);
-                    i++;
-                    break;
             }
         }
 
