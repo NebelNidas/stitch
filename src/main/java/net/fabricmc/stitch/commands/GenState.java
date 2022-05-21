@@ -121,13 +121,13 @@ class GenState {
         return isObfuscatedMethodName(m.getName(), c) && m.isSource(storage, c);
     }
 
-    public static boolean isObfuscatedMethodName(String mathodName, JarClassEntry parentClass) {
+    public static boolean isObfuscatedMethodName(String methodName, JarClassEntry parentClass) {
         if (
-            mathodName.charAt(0) != '<'
+            methodName.charAt(0) != '<'
                 && (
-                    mathodName.length() <= 2 
+                    methodName.length() <= 2 
                         // TODO: Replace the flowing hardcoded exceptions with input parameters!
-                        || (mathodName.length() == 8 && parentClass.getName().equals("J/N"))
+                        || (methodName.length() == 8 && parentClass.getName().equals("J/N"))
                 )
         ) {
             return true;
