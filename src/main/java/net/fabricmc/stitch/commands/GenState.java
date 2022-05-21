@@ -118,10 +118,10 @@ class GenState {
     }
 
     public static boolean isMappedMethod(ClassStorage storage, JarClassEntry c, JarMethodEntry m) {
-        return isUnmappedMethodName(m.getName(), c) && m.isSource(storage, c);
+        return isObfuscatedMethodName(m.getName(), c) && m.isSource(storage, c);
     }
 
-    public static boolean isUnmappedMethodName(String mathodName, JarClassEntry parentClass) {
+    public static boolean isObfuscatedMethodName(String mathodName, JarClassEntry parentClass) {
         if (
             mathodName.charAt(0) != '<'
                 && (
@@ -135,7 +135,7 @@ class GenState {
         return false;
     }
 
-    public static boolean isObfuscatedClass(JarClassEntry classEntry) {
+    public static boolean isObfuscatedClassName(JarClassEntry classEntry) {
         String classPath = classEntry.getName();
         String className = Arrays.asList(classPath.split("/")).stream().reduce((first, second) -> second).get();
 
@@ -365,7 +365,7 @@ class GenState {
         String cname = "";
         String prefixSaved = translatedPrefix;
 
-        if (!isObfuscatedClass(c)) {
+        if (!isObfuscatedClassName(c)) {
             translatedPrefix = c.getFullyQualifiedName();
         } else {
             if (!isMappedClass(storage, c)) {
