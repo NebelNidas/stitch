@@ -154,6 +154,7 @@ public class JarClassEntry extends AbstractJarEntry {
     }
 
     public boolean isAnonymous() {
+        // Anonymous classes are always named (by javac) as numbers
         return getName().matches("[0-9]+");
     }
 

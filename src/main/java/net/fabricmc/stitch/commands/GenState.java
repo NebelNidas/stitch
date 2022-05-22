@@ -36,8 +36,12 @@ import java.util.*;
 class GenState {
     private final Map<String, Integer> counters = new HashMap<>();
     private final Map<AbstractJarEntry, Integer> values = new IdentityHashMap<>();
-    private GenMap oldToIntermediary, newToOld;
-    private GenMap newToIntermediary;
+    // The following GenMaps are generated from the mapping file supplied via
+    //   the `<old-mapping-file>` parameter from the `updateIntermediary` command 
+    private GenMap suppliedOldMappings, matchesBetweenNewAndOldOfficialNames;
+    // The following GenMap is generated from the mappings potentially already
+    //   present in the supplied target file to write to
+    private GenMap outputFileOldMappings;
     private boolean interactive = true;
     private boolean writeAll = false;
     private Scanner scanner = new Scanner(System.in);
@@ -82,9 +86,9 @@ class GenState {
     public void generate(File file, JarRootEntry jarEntry, JarRootEntry jarOld) throws IOException {
         if (file.exists()) {
             System.err.println("Target file exists - loading...");
-            newToIntermediary = new GenMap();
+            outputFileOldMappings = new GenMap();
             try (FileInputStream inputStream = new FileInputStream(file)) {
-                newToIntermediary.load(
+                outputFileOldMappings.load(
                         MappingsProvider.readTinyMappings(inputStream),
                         "official",
                         "intermediary"
@@ -97,16 +101,12 @@ class GenState {
                 writer.write("v1\tofficial\tintermediary\n");
 
                 for (JarClassEntry c : jarEntry.getClasses()) {
-                    addClass(writer, c, jarOld, jarEntry, this.targetNamespace);
+                    addClass(writer, c, jarOld, jarEntry, this.targetNamespace, false);
                 }
 
                 writeCounters(writer);
             }
         }
-    }
-
-    public static boolean isMappedClass(ClassStorage storage, JarClassEntry c) {
-        return !c.isAnonymous();
     }
 
     public static boolean isMappedField(ClassStorage storage, JarClassEntry c, JarFieldEntry f) {
@@ -126,7 +126,6 @@ class GenState {
             methodName.charAt(0) != '<'
                 && (
                     methodName.length() <= 2 
-                        // TODO: Replace the flowing hardcoded exceptions with input parameters!
                         || (methodName.length() == 8 && parentClass.getName().equals("J/N"))
                 )
         ) {
@@ -135,13 +134,27 @@ class GenState {
         return false;
     }
 
+    public static boolean hasObfuscatedPackage(JarClassEntry classEntry) {
+        // JarClassEntry.getFullyQualifiedName() always returns the full class path.
+        // JarClassEntry.getName() sometimes returns just the actual (sub)class name,
+        //   but sometimes the full path (except when having subclasses) as well
+
+        String classPath = classEntry.getFullyQualifiedName();
+
+        if (!classPath.contains("/")) {
+            return true;
+        }
+        return false;
+    }
+
     public static boolean isObfuscatedClassName(JarClassEntry classEntry) {
-        String classPath = classEntry.getName();
-        String className = Arrays.asList(classPath.split("/")).stream().reduce((first, second) -> second).get();
+        String className = Arrays.asList(classEntry.getName().split("/")).stream().reduce((first, second) -> second).get();
+        List<Character> classNameChars = new ArrayList<>(4);
 
         if (
-            !classPath.contains("/")
-                || className.length() <= 2
+            className.length() <= 4
+                && className.matches("^[a-z]+$")
+                // TODO: Obfuscated class names' chars are always alphabetically sorted
         ) {
             return true;
         }
@@ -154,8 +167,8 @@ class GenState {
             return null;
         }
 
-        if (newToIntermediary != null) {
-            EntryTriple findEntry = newToIntermediary.getField(c.getFullyQualifiedName(), f.getName(), f.getDescriptor());
+        if (outputFileOldMappings != null) {
+            EntryTriple findEntry = outputFileOldMappings.getField(c.getFullyQualifiedName(), f.getName(), f.getDescriptor());
             if (findEntry != null) {
                 if (findEntry.getName().contains("field_")) {
                     return findEntry.getName();
@@ -167,10 +180,10 @@ class GenState {
             }
         }
 
-        if (newToOld != null) {
-            EntryTriple findEntry = newToOld.getField(c.getFullyQualifiedName(), f.getName(), f.getDescriptor());
+        if (matchesBetweenNewAndOldOfficialNames != null) {
+            EntryTriple findEntry = matchesBetweenNewAndOldOfficialNames.getField(c.getFullyQualifiedName(), f.getName(), f.getDescriptor());
             if (findEntry != null) {
-                findEntry = oldToIntermediary.getField(findEntry);
+                findEntry = suppliedOldMappings.getField(findEntry);
                 if (findEntry != null) {
                     if (findEntry.getName().contains("field_")) {
                         return findEntry.getName();
@@ -251,18 +264,18 @@ class GenState {
 
         for (JarClassEntry cc : ccList) {
             EntryTriple findEntry = null;
-            if (newToIntermediary != null) {
-                findEntry = newToIntermediary.getMethod(cc.getFullyQualifiedName(), m.getName(), m.getDescriptor());
+            if (outputFileOldMappings != null) {
+                findEntry = outputFileOldMappings.getMethod(cc.getFullyQualifiedName(), m.getName(), m.getDescriptor());
                 if (findEntry != null) {
                     names.computeIfAbsent(findEntry.getName(), (s) -> new TreeSet<>()).add(getNamesListEntry(storageNew, cc) + suffix);
                 }
             }
 
-            if (findEntry == null && newToOld != null) {
-                findEntry = newToOld.getMethod(cc.getFullyQualifiedName(), m.getName(), m.getDescriptor());
+            if (findEntry == null && matchesBetweenNewAndOldOfficialNames != null) {
+                findEntry = matchesBetweenNewAndOldOfficialNames.getMethod(cc.getFullyQualifiedName(), m.getName(), m.getDescriptor());
                 if (findEntry != null) {
                     EntryTriple newToOldEntry = findEntry;
-                    findEntry = oldToIntermediary.getMethod(newToOldEntry);
+                    findEntry = suppliedOldMappings.getMethod(newToOldEntry);
                     if (findEntry != null) {
                         names.computeIfAbsent(findEntry.getName(), (s) -> new TreeSet<>()).add(getNamesListEntry(storageNew, cc) + suffix);
                     } else {
@@ -273,7 +286,7 @@ class GenState {
                             List<JarClassEntry> cccList = oldM.getMatchingEntries(storageOld, oldBase);
 
                             for (JarClassEntry ccc : cccList) {
-                                findEntry = oldToIntermediary.getMethod(ccc.getFullyQualifiedName(), oldM.getName(), oldM.getDescriptor());
+                                findEntry = suppliedOldMappings.getMethod(ccc.getFullyQualifiedName(), oldM.getName(), oldM.getDescriptor());
                                 if (findEntry != null) {
                                     names.computeIfAbsent(findEntry.getName(), (s) -> new TreeSet<>()).add(getNamesListEntry(storageOld, ccc) + suffix);
                                 }
@@ -301,7 +314,7 @@ class GenState {
             return methodNames.get(m);
         }
 
-        if (newToOld != null || newToIntermediary != null) {
+        if (matchesBetweenNewAndOldOfficialNames != null || outputFileOldMappings != null) {
             Map<String, Set<String>> names = new HashMap<>();
             Set<JarMethodEntry> allEntries = findNames(storageOld, storageNew, c, m, names);
             for (JarMethodEntry mm : allEntries) {
@@ -360,59 +373,85 @@ class GenState {
         return next(m, "method");
     }
 
-    private void addClass(BufferedWriter writer, JarClassEntry c, ClassStorage storageOld, ClassStorage storage, String translatedPrefix) throws IOException {
-        String className = c.getName();
-        String cname = "";
-        String prefixSaved = translatedPrefix;
+    private void addClass(BufferedWriter writer, JarClassEntry c, ClassStorage storageOld, ClassStorage storage, String packagePrefix, boolean isSubclass) throws IOException {
+        String className = null;
 
-        if (!isObfuscatedClassName(c)) {
-            translatedPrefix = c.getFullyQualifiedName();
-        } else {
-            if (!isMappedClass(storage, c)) {
-                cname = c.getName();
-            } else {
-                cname = null;
+        // Only classes without a package should be looked at,
+        //   all other ones are already mapped or have mappings
+        //   openly available on the Internet
+        if (c.getFullyQualifiedName().contains("/")) {
+            return;
+        }
 
-                if (newToIntermediary != null) {
-                    String findName = newToIntermediary.getClass(c.getFullyQualifiedName());
-                    if (findName != null) {
-                        String[] r = findName.split("\\$");
-                        cname = r[r.length - 1];
-                        if (r.length == 1) {
-                            translatedPrefix = "";
-                        }
+        // Is it a subclass (even if not specified so)?
+        if (!isSubclass && c.getFullyQualifiedName().contains("$")) {
+            isSubclass = true;
+        }
+
+
+        // Set package and class names
+        if (!hasObfuscatedPackage(c) && !isSubclass) {
+            // Package name is not obfuscated, so we use that
+            //   instead of the passed in one, but only if we're
+            //   not looking at a subclass
+            String classPath = c.getFullyQualifiedName();
+            packagePrefix = classPath.substring(0, classPath.lastIndexOf("/") + 1);
+        }
+        if (c.isAnonymous()) {
+            // Anonymous classes don't need intermediary names
+            className = c.getName();
+        }
+        else if (!isObfuscatedClassName(c)) {
+            // If the class name is not obfuscated, use it
+            className = c.getName();
+        }
+        else {
+            // Class name is obfuscated. We don't generate a new
+            //   intermediary name instantly though, but check first
+            //   if we can reuse an old one.
+            // This can be combined with the rename check later though,
+            //   so as an indicator that `className` still has to be set
+            //   we set it to null.
+            className = null;
+        }
+
+        // Has this class been mapped before on a previous file?
+        String oldClassPath = null;
+
+        if (matchesBetweenNewAndOldOfficialNames != null) {
+            String foundClassPath = matchesBetweenNewAndOldOfficialNames.getClass(c.getFullyQualifiedName());
+            if (foundClassPath != null) {
+                oldClassPath = suppliedOldMappings.getClass(foundClassPath);
+                if (className == null) {
+                    // Reuse old intermediary name instead of generating
+                    //   a new one (see the comment a few lines above)
+                    String[] r = foundClassPath.split("\\$");
+                    String oldClassName = r[r.length - 1];
+
+                    // Only reuse the old name if it's actually an intermediary
+                    if (oldClassName.contains("class_")) {
+                        className = oldClassName;
                     }
                 }
+            }
 
-                if (cname == null && newToOld != null) {
-                    String findName = newToOld.getClass(c.getFullyQualifiedName());
-                    if (findName != null) {
-                        findName = oldToIntermediary.getClass(findName);
-                        if (findName != null) {
-                            String[] r = findName.split("\\$");
-                            cname = r[r.length - 1];
-                            if (r.length == 1) {
-                                translatedPrefix = "";
-                            }
-
-                        }
-                    }
-                }
-
-                if (cname != null && !cname.contains("class_")) {
-                    String newName = next(c, "class");
-                    System.out.println(cname + " is now " + newName);
-                    cname = newName;
-                    translatedPrefix = prefixSaved;
-                }
-
-                if (cname == null) {
-                    cname = next(c, "class");
-                }
+            if (oldClassPath == null && outputFileOldMappings != null) {
+                oldClassPath = outputFileOldMappings.getClass(c.getFullyQualifiedName());
             }
         }
 
-        writer.write("CLASS\t" + c.getFullyQualifiedName() + "\t" + translatedPrefix + cname + "\n");
+        // If class is obfuscated but no old name could be reused,
+        //   generate a new intermediary name
+        if (className == null) {
+            className = next(c, "class");
+        }
+
+        // If it was mapped differently previously, log the change
+        if (oldClassPath != null && oldClassPath != className) {
+            System.out.println(oldClassPath + " is now " + packagePrefix + className);
+        }
+
+        writer.write("CLASS\t" + c.getFullyQualifiedName() + "\t" + packagePrefix + className + "\n");
 
         for (JarFieldEntry f : c.getFields()) {
             String fName = getFieldName(storage, c, f);
@@ -421,6 +460,9 @@ class GenState {
             }
 
             if (fName != null) {
+                if (fName.equals(f.getName())) {
+                    continue;
+                }
                 writer.write("FIELD\t" + c.getFullyQualifiedName()
                         + "\t" + f.getDescriptor()
                         + "\t" + f.getName()
@@ -437,6 +479,9 @@ class GenState {
             }
 
             if (mName != null) {
+                if (mName.equals(m.getName())) {
+                    continue;
+                }
                 writer.write("METHOD\t" + c.getFullyQualifiedName()
                         + "\t" + m.getDescriptor()
                         + "\t" + m.getName()
@@ -445,19 +490,19 @@ class GenState {
         }
 
         for (JarClassEntry cc : c.getInnerClasses()) {
-            addClass(writer, cc, storageOld, storage, translatedPrefix + cname + "$");
+            addClass(writer, cc, storageOld, storage, packagePrefix + className + "$", true);
         }
     }
 
     public void prepareRewrite(File oldMappings) throws IOException {
-        oldToIntermediary = new GenMap();
-        newToOld = new GenMap.Dummy();
+        suppliedOldMappings = new GenMap();
+        matchesBetweenNewAndOldOfficialNames = new GenMap.Dummy();
 
         // TODO: only read once
         readCounters(oldMappings);
 
         try (FileInputStream inputStream = new FileInputStream(oldMappings)) {
-            oldToIntermediary.load(
+            suppliedOldMappings.load(
                     MappingsProvider.readTinyMappings(inputStream),
                     "official",
                     "intermediary"
@@ -466,14 +511,14 @@ class GenState {
     }
 
     public void prepareUpdate(File oldMappings, File matches) throws IOException {
-        oldToIntermediary = new GenMap();
-        newToOld = new GenMap();
+        suppliedOldMappings = new GenMap();
+        matchesBetweenNewAndOldOfficialNames = new GenMap();
 
         // TODO: only read once
         readCounters(oldMappings);
 
         try (FileInputStream inputStream = new FileInputStream(oldMappings)) {
-            oldToIntermediary.load(
+            suppliedOldMappings.load(
                     MappingsProvider.readTinyMappings(inputStream),
                     "official",
                     "intermediary"
@@ -482,7 +527,7 @@ class GenState {
 
         try (FileReader fileReader = new FileReader(matches)) {
             try (BufferedReader reader = new BufferedReader(fileReader)) {
-                MatcherUtil.read(reader, true, newToOld::addClass, newToOld::addField, newToOld::addMethod);
+                MatcherUtil.read(reader, true, matchesBetweenNewAndOldOfficialNames::addClass, matchesBetweenNewAndOldOfficialNames::addField, matchesBetweenNewAndOldOfficialNames::addMethod);
             }
         }
     }
