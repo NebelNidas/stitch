@@ -47,7 +47,6 @@ allprojects {
 }
 
 def ENV = System.getenv()
-version += (ENV.GITHUB_ACTIONS ? '' : '+local')
 
 configurations {
 	ship
