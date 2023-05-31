@@ -82,7 +82,7 @@ class GenState {
 	private String targetPackage = "";
 
 	public enum IntermediaryType {
-		CLASS("class"),
+		CLASS("Class"),
 		FIELD("field"),
 		METHOD("method");
 
